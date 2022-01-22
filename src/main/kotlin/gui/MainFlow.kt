@@ -1,6 +1,7 @@
 package gui
 
 import common.Diagnostic
+import detective.Detective
 import logic.KarelError
 import logic.Problem
 import logic.World
@@ -42,10 +43,14 @@ open class MainFlow : MainDesign(AtomicReference(Problem.karelsFirstProgram.crea
     fun parseAndExecute() {
         editor.indent()
         editor.autosaver.save()
+        editor.clearDiagnostics()
         try {
             val lexer = Lexer(editor.text)
             val parser = Parser(lexer)
-            parser.program()
+            val program = parser.program()
+            for (diagnostic in Detective(program, parser.sema).result) {
+                editor.showDiagnostic(diagnostic.message, diagnostic.position)
+            }
             val main = parser.sema.command(currentProblem.name)
             if (main != null) {
                 val instructions = CodeGenerator(parser.sema).generate(main)
