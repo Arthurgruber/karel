@@ -2,6 +2,7 @@ package gui
 
 import common.Diagnostic
 import common.Stack
+import kotlinx.coroutines.yield
 import logic.KarelError
 import logic.Problem
 import logic.UNKNOWN
@@ -12,7 +13,6 @@ import syntax.parser.program
 import vm.CodeGenerator
 import vm.Instruction
 import vm.VirtualMachine
-import java.awt.EventQueue
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.Timer
 
@@ -40,7 +40,7 @@ open class MainFlow : MainDesign(AtomicReference(Problem.karelsFirstProgram.rand
         start(instructions)
     }
 
-    fun checkAgainst(goal: String) {
+    suspend fun checkAgainst(goal: String) {
         editor.indent()
         editor.autosaver.save()
         editor.clearDiagnostics()
@@ -56,7 +56,8 @@ open class MainFlow : MainDesign(AtomicReference(Problem.karelsFirstProgram.rand
                 val goalInstructions = vm.createInstructionBuffer()
                 goalInstructions.addAll(goal.map { vm.goalInstruction(it.code) })
 
-                check(instructions, goalInstructions)
+                val result = check(instructions, goalInstructions)
+                showDiagnostic(result)
             } else {
                 editor.setCursorTo(editor.length())
                 showDiagnostic("void ${currentProblem.name}() not found")
@@ -66,60 +67,39 @@ open class MainFlow : MainDesign(AtomicReference(Problem.karelsFirstProgram.rand
         }
     }
 
-    private fun check(instructions: List<Instruction>, goalInstructions: MutableList<Instruction>) {
+    private suspend fun check(instructions: List<Instruction>, goalInstructions: MutableList<Instruction>): String {
         controlPanel.checkStarted()
-
-        fun cleanup() {
+        try {
+            var checked = 0
+            val start = System.currentTimeMillis()
+            var nextRepaint = 0
+            for (id in currentProblem.randomWorldIds()) {
+                val elapsed = System.currentTimeMillis() - start
+                if (elapsed >= 2000) {
+                    return if (currentProblem.numWorlds == UNKNOWN) {
+                        "checked $checked random worlds"
+                    } else {
+                        "checked $checked random worlds\nfrom ${currentProblem.numWorlds} possible worlds"
+                    }
+                }
+                initialWorld = currentProblem.createWorld(id)
+                if (elapsed >= nextRepaint) {
+                    atomicWorld.set(initialWorld)
+                    worldPanel.repaint()
+                    nextRepaint += 100
+                    yield()
+                }
+                checkOnce(instructions, goalInstructions)
+                ++checked
+            }
+            return "checked all ${currentProblem.numWorlds} possible worlds"
+        } finally {
             controlPanel.checkFinished(currentProblem.isRandom)
 
             virtualMachinePanel.clearStack()
             editor.clearStack()
             update()
         }
-
-        val ids = currentProblem.randomWorldIds().iterator()
-        var checked = 0
-        initialWorld = currentProblem.createWorld(ids.next())
-        val start = System.currentTimeMillis()
-        var lastRepaint = start
-
-        fun report() {
-            if (!ids.hasNext()) {
-                showDiagnostic("checked all ${currentProblem.numWorlds} possible worlds")
-            } else if (currentProblem.numWorlds == UNKNOWN) {
-                showDiagnostic("checked $checked random worlds")
-            } else {
-                showDiagnostic("checked $checked random worlds\nfrom ${currentProblem.numWorlds} possible worlds")
-            }
-        }
-
-        fun oneMoreTime() {
-            try {
-                var now: Long
-                do {
-                    checkOnce(instructions, goalInstructions)
-                    ++checked
-                    now = System.currentTimeMillis()
-                    if (!ids.hasNext() || now - start >= 2000) {
-                        cleanup()
-                        report()
-                        return
-                    }
-                    initialWorld = currentProblem.createWorld(ids.next())
-                } while (now - lastRepaint < 100)
-                lastRepaint = now
-
-                atomicWorld.set(initialWorld)
-                worldPanel.repaint()
-                EventQueue.invokeLater(::oneMoreTime)
-            } catch (diagnostic: Diagnostic) {
-                cleanup()
-                showDiagnostic(diagnostic)
-            }
-        }
-        atomicWorld.set(initialWorld)
-        worldPanel.repaint()
-        EventQueue.invokeLater(::oneMoreTime)
     }
 
     fun checkOnce(instructions: List<Instruction>, goalInstructions: List<Instruction>) {

@@ -1,5 +1,8 @@
 package gui
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import logic.Problem
 import java.awt.event.KeyEvent
 import java.util.function.Consumer
@@ -59,8 +62,10 @@ class MainHandler : MainFlow() {
 
         controlPanel.check.addActionListener {
             controlPanel.startStopReset.text = "reset"
-            checkAgainst(currentProblem.goal)
-
+            val uiScope = CoroutineScope(Dispatchers.Main)
+            uiScope.launch {
+                checkAgainst(currentProblem.goal)
+            }
             editor.requestFocusInWindow()
         }
 
